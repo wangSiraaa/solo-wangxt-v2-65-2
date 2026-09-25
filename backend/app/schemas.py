@@ -63,3 +63,31 @@ class NeighborIn(BaseModel):
     inbound_policy: Optional[str] = None
     outbound_policy: Optional[str] = None
     description: str = ""
+
+
+# ------------------------------------------------------- three-way merging
+
+class WorkingCopyIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    base_snapshot_id: Optional[int] = None
+    editor: str = "lab"
+
+
+class WorkingCopyEditIn(BaseModel):
+    payload: dict
+    expected_version: Optional[int] = None
+
+
+class MergePreviewIn(BaseModel):
+    working_copy_id: int
+    reopen_id: Optional[int] = None
+    created_by: str = "lab"
+
+
+class MergeDecisionIn(BaseModel):
+    # conflict hunk id ("4:0", "4:policy", "d:4", ..) -> "main" | "work"
+    resolutions: dict
+
+
+class MergeCommitIn(BaseModel):
+    label: str = ""

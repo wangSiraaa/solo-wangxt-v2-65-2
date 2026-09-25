@@ -6,7 +6,7 @@ from typing import List
 
 from sqlalchemy import (
     JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
-    create_engine, select,
+    create_engine, select, text as __sa_text,
 )
 from sqlalchemy.orm import (
     DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session,
@@ -131,8 +131,98 @@ class Run(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Concurrent editing: working copies + persistent merge transactions
+# ---------------------------------------------------------------------------
+
+class WorkingCopy(Base):
+    """
+    One person's fork of an immutable baseline snapshot.
+
+    The copy keeps:
+      * base_snapshot_id   -- the immutable fork point (the merge BASE)
+      * version            -- monotonic per-copy edit counter (every saved
+                              edit increments it; used for optimistic checks)
+      * payload            -- current edited policy body (v4/v6 planes)
+      * ops                -- append-only edit operation log
+    Edits never mutate any snapshot; commits produce a NEW mainline snapshot.
+    """
+    __tablename__ = "working_copies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    policy_id: Mapped[int] = mapped_column(
+        ForeignKey("policies.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(128))
+    editor: Mapped[str] = mapped_column(String(64), default="lab")
+    base_snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"))
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    payload: Mapped[dict] = mapped_column(JSON)
+    ops: Mapped[list] = mapped_column(JSON, default=list)
+    abandoned: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("policy_id", "name", name="uq_policy_copy_name"),
+    )
+
+
+class MergeTransaction(Base):
+    """
+    A persisted three-way merge attempt.
+
+    A row is created on the first PREVIEW and survives refreshes and server
+    restarts: base/main/work payloads, the semantic plan, outstanding human
+    decisions and the BASE snapshot are all stored.  Commit atomically
+    creates exactly one successor snapshot (guarded by a partial unique
+    index on committed_snapshot_id); abandoning deletes nothing that other
+    branches point at.
+    """
+    __tablename__ = "merge_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    policy_id: Mapped[int] = mapped_column(
+        ForeignKey("policies.id", ondelete="CASCADE"))
+    working_copy_id: Mapped[int] = mapped_column(
+        ForeignKey("working_copies.id", ondelete="CASCADE"))
+    base_snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"))
+    main_snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"))
+    status: Mapped[str] = mapped_column(
+        String(16), default="open")   # open | committed | abandoned
+    base_payload: Mapped[dict] = mapped_column(JSON)
+    main_payload: Mapped[dict] = mapped_column(JSON)
+    work_payload: Mapped[dict] = mapped_column(JSON)
+    plan: Mapped[dict] = mapped_column(JSON, default=dict)
+    resolutions: Mapped[dict] = mapped_column(JSON, default=dict)
+    committed_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("snapshots.id"), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="lab")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow)
+    committed_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime, nullable=True)
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    # A committed merge points at exactly one successor snapshot, and each
+    # snapshot is produced by at most one merge transaction (idempotency +
+    # the "one successor version" concurrency guarantee).
+    with engine.begin() as conn:
+        if engine.dialect.name == "sqlite":
+            conn.execute(__sa_text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "uq_merge_committed_snapshot "
+                "ON merge_transactions(committed_snapshot_id) "
+                "WHERE committed_snapshot_id IS NOT NULL"))
+        elif engine.dialect.name == "postgresql":
+            conn.execute(__sa_text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "uq_merge_committed_snapshot "
+                "ON merge_transactions(committed_snapshot_id) "
+                "WHERE committed_snapshot_id IS NOT NULL"))
 
 
 def get_session() -> Session:

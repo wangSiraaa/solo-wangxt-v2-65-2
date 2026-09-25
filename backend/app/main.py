@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import CORS_ORIGINS
 from .db import init_db
 from .routers.api import router
+from .routers.merge_api import router as merge_router
 
 app = FastAPI(
     title="Routing Policy Rehearsal Workbench",
@@ -27,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(merge_router)
 
 
 @app.on_event("startup")

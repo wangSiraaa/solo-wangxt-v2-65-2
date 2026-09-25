@@ -39,4 +39,31 @@ export const api = {
   crossValidate: (id, probes, node = 'a') =>
     req(`/snapshots/${id}/cross-validate`, { method: 'POST', body: { probes, node } }),
   runs: () => req('/runs'),
+  // ----- working copies & semantic three-way merges -----
+  workingCopies: (id) => req(`/api/policies/${id}/working-copies`),
+  createWorkingCopy: (id, body) =>
+    req(`/api/policies/${id}/working-copies`, { method: 'POST', body: JSON.stringify(body) }),
+  getWorkingCopy: (id) => req(`/api/working-copies/${id}`),
+  saveWorkingCopy: (id, payload, expectedVersion) =>
+    req(`/api/working-copies/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ payload, expected_version: expectedVersion }),
+    }),
+  abandonWorkingCopy: (id) => req(`/api/working-copies/${id}`, { method: 'DELETE' }),
+  mergePreview: (workingCopyId, reopenId) =>
+    req('/api/merges/preview', {
+      method: 'POST',
+      body: JSON.stringify({ working_copy_id: workingCopyId, reopen_id: reopenId }),
+    }),
+  mergeGet: (mid) => req(`/api/merges/${mid}`),
+  mergeDecide: (mid, resolutions) =>
+    req(`/api/merges/${mid}/decisions`, {
+      method: 'POST', body: JSON.stringify({ resolutions }) }),
+  mergeCommit: (mid, label = '') =>
+    req(`/api/merges/${mid}/commit`, {
+      method: 'POST', body: JSON.stringify({ label }) }),
+  mergeAbandon: (mid) => req(`/api/merges/${mid}/abandon`, { method: 'POST' }),
+  mergeCrossValidate: (mid, probes, node = 'a') =>
+    req(`/api/merges/${mid}/cross-validate`, {
+      method: 'POST', body: JSON.stringify({ probes, node }) }),
 };

@@ -29,8 +29,9 @@ class TrieNode:
     net: ipaddress._BaseNetwork
     child0: Optional["TrieNode"] = None
     child1: Optional["TrieNode"] = None
-    rules_a: List[Rule] = field(default_factory=list)   # policy A
-    rules_b: List[Rule] = field(default_factory=list)   # policy B (diff only)
+    rules_a: List[Rule] = field(default_factory=list)   # policy A / base
+    rules_b: List[Rule] = field(default_factory=list)   # policy B / mainline
+    rules_c: List[Rule] = field(default_factory=list)   # policy C / working copy (3-way merge)
 
     def children(self) -> List["TrieNode"]:
         return [c for c in (self.child0, self.child1) if c is not None]
@@ -42,7 +43,8 @@ def _root_net(family: int) -> ipaddress._BaseNetwork:
 
 def build_trie(family: int,
                rules_a: List[Rule],
-               rules_b: Optional[List[Rule]] = None) -> TrieNode:
+               rules_b: Optional[List[Rule]] = None,
+               rules_c: Optional[List[Rule]] = None) -> TrieNode:
     maxlen = MAXLEN[family]
     root = TrieNode(0, _root_net(family))
 
@@ -67,6 +69,8 @@ def build_trie(family: int,
         insert(r, "rules_a")
     for r in (rules_b or []):
         insert(r, "rules_b")
+    for r in (rules_c or []):
+        insert(r, "rules_c")
     return root
 
 
