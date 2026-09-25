@@ -46,7 +46,7 @@ def policy_payload(db_pol: dbmod.Policy) -> dict:
         "draft": db_pol.draft,
         "rules": [
             {
-                "id": r.id, "seq": r.seq, "prefix": r.prefix,
+                "id": r.id, "rid": r.rid, "seq": r.seq, "prefix": r.prefix,
                 "action": r.action, "ge": r.ge, "le": r.le, "remark": r.remark or "",
             } for r in db_pol.rules
         ],
@@ -59,6 +59,7 @@ def validate_rule_dicts(family: int, rules: List[dict]) -> List[EngineRule]:
     """Parse every rule through ipaddress; reject cross-family / bad ge/le."""
     out = []
     seen_seq = set()
+    seen_rid = set()
     for d in rules:
         r = EngineRule(
             seq=int(d["seq"]), prefix=d["prefix"].strip(),
@@ -73,6 +74,11 @@ def validate_rule_dicts(family: int, rules: List[dict]) -> List[EngineRule]:
         if r.seq in seen_seq:
             raise ValidationError(f"duplicate seq {r.seq}")
         seen_seq.add(r.seq)
+        rid = d.get("rid")
+        if rid:
+            if rid in seen_rid:
+                raise ValidationError(f"duplicate rid {rid}")
+            seen_rid.add(rid)
         out.append(r)
     return out
 
@@ -87,13 +93,17 @@ def replace_rules(session: Session, db_pol: dbmod.Policy,
     session.flush()
     session.expire_all()
     db_pol = session.get(dbmod.Policy, db_pol.id)
-    db_pol.rules = [
-        dbmod.Rule(
-            seq=int(r["seq"]), prefix=r["prefix"].strip(),
-            action=r["action"], ge=r.get("ge"), le=r.get("le"),
-            remark=r.get("remark", ""),
-        ) for r in sorted(rules, key=lambda x: int(x["seq"]))
-    ]
+    for d in rules:
+        rid = d.get("rid") or dbmod.new_rid()
+        db_pol.rules.append(
+            dbmod.Rule(
+                rid=rid,
+                seq=int(d["seq"]), prefix=d["prefix"].strip(),
+                action=d["action"], ge=d.get("ge"), le=d.get("le"),
+                remark=d.get("remark", ""),
+            )
+        )
+    db_pol.rules.sort(key=lambda r: r.seq)
     session.add(db_pol)
     session.commit()
     session.refresh(db_pol)
@@ -105,16 +115,23 @@ def replace_rules(session: Session, db_pol: dbmod.Policy,
 # --------------------------------------------------------------------------
 
 def create_snapshot(session: Session, db_pol: dbmod.Policy,
-                    label: str = "", created_by: str = "lab") -> dbmod.Snapshot:
+                    label: str = "", created_by: str = "lab",
+                    parent_snapshot: dbmod.Snapshot | None = None,
+                    merge_info: dict | None = None,
+                    workcopy: dbmod.WorkCopy | None = None) -> dbmod.Snapshot:
     ep = engine_policy(db_pol)
-    last = session.scalar(
+    version_query = (
         select(dbmod.Snapshot)
         .where(dbmod.Snapshot.policy_id == db_pol.id)
         .order_by(dbmod.Snapshot.version.desc())
     )
+    if session.bind.dialect.name != "sqlite":
+        version_query = version_query.with_for_update()
+    last = session.scalar(version_query)
     version = (last.version + 1) if last else 1
     snap = dbmod.Snapshot(
         policy_id=db_pol.id,
+        parent_id=parent_snapshot.id if parent_snapshot else None,
         version=version,
         label=label or f"v{version}",
         payload={
@@ -122,13 +139,16 @@ def create_snapshot(session: Session, db_pol: dbmod.Policy,
             "family": db_pol.family,
             "default_action": db_pol.default_action,
             "rules": [
-                {"seq": r.seq, "prefix": r.prefix, "action": r.action,
-                 "ge": r.ge, "le": r.le, "remark": r.remark or ""}
+                {"rid": r.rid, "seq": r.seq, "prefix": r.prefix,
+                 "action": r.action, "ge": r.ge, "le": r.le,
+                 "remark": r.remark or ""}
                 for r in db_pol.rules
             ],
         },
         frr_config=ep.to_frr_prefix_list(),
         created_by=created_by,
+        created_by_workcopy_id=workcopy.id if workcopy else None,
+        merge_info=merge_info,
     )
     session.add(snap)
     session.commit()
@@ -149,6 +169,7 @@ def snapshot_dict(snap: dbmod.Snapshot) -> dict:
         "id": snap.id,
         "policy_id": snap.policy_id,
         "version": snap.version,
+        "parent_snapshot_id": snap.parent_id,
         "label": snap.label,
         "payload": snap.payload,
         "frr_config": snap.frr_config,

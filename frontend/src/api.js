@@ -39,4 +39,28 @@ export const api = {
   crossValidate: (id, probes, node = 'a') =>
     req(`/snapshots/${id}/cross-validate`, { method: 'POST', body: { probes, node } }),
   runs: () => req('/runs'),
+  createWorkCopy: (pid, b) => req(`/policies/${pid}/workcopies`, { method: 'POST', body: b }),
+  workCopies: (pid) => req(`/policies/${pid}/workcopies`),
+  workCopy: (id) => req(`/workcopies/${id}`),
+  setWorkCopyRules: (id, rules, default_action, expected_version, note = '') =>
+    req(`/workcopies/${id}/rules`, {
+      method: 'PUT',
+      body: { rules, default_action, expected_version, note },
+    }),
+  workCopyOps: (id) => req(`/workcopies/${id}/operations`),
+  mergePreview: (id, body) => req(`/workcopies/${id}/merge-preview`, { method: 'POST', body }),
+  mergeSession: (id) => req(`/merge-sessions/${id}`),
+  mergeSessions: (id) => req(`/workcopies/${id}/merge-sessions`),
+  resolveMerge: (id, resolutions, expected_session_version) =>
+    req(`/merge-sessions/${id}/resolutions`, {
+      method: 'POST', body: { resolutions, expected_session_version },
+    }),
+  validateMerge: (id, probes, node = 'a', run_frr = false) =>
+    req(`/merge-sessions/${id}/validate`, {
+      method: 'POST', body: { probes, node, run_frr },
+    }),
+  commitMerge: (id, body) => req(`/merge-sessions/${id}/commit`, { method: 'POST', body }),
+  abandonMerge: (id, reason = '') =>
+    req(`/merge-sessions/${id}/abandon`, { method: 'POST', body: { reason } }),
+  deleteWorkCopy: (id) => req(`/workcopies/${id}`, { method: 'DELETE' }),
 };

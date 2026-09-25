@@ -93,3 +93,24 @@ th { color: var(--muted); font-weight: 600; }
 .cvbox.mismatch { border-left: 4px solid var(--deny); }
 tr.badrow { background: rgba(255,107,107,.08); }
 tr.okrow { background: rgba(46,204,113,.06); }
+
+.merge-lab .wrap { flex-wrap: wrap; gap: 8px; }
+.merge-grid { display: grid; grid-template-columns: minmax(320px, 480px) 1fr; gap: 16px; }
+.json-edit { width: 100%; min-height: 520px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.merge-payload summary { cursor: pointer; font-weight: 700; }
+.compact td { padding: 2px 6px; }
+.conflict-card { border: 1px solid var(--bad, #c0392b); border-radius: 8px; padding: 10px; margin: 10px 0; background: rgba(192,57,43,.06); }
+.side-cmp { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+.side-cmp pre { max-height: 240px; overflow: auto; background: white; padding: 6px; border-radius: 6px; }
+.witness-card { border-left: 4px solid #999; margin: 8px 0; padding: 8px; background: rgba(0,0,0,.03); border-radius: 6px; }
+.witness-card.conflict { border-left-color: #c0392b; background: rgba(192,57,43,.08); }
+.witness-card.auto_main, .witness-card.auto_copy { border-left-color: #d35400; }
+.witness-card.equivalent, .witness-card.unchanged { border-left-color: #27ae60; }
+.witness-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.chain-block { border-top: 1px dashed #aaa; margin-top: 6px; }
+.chain-block .matched { color: #116d36; font-weight: 700; }
+.chain-block .contained { color: #a15c00; }
+.decisions { max-height: 180px; overflow: auto; }
+.primary { font-weight: 700; }
+.danger { color: #c0392b; }
+@media (max-width: 1100px) { .merge-grid, .side-cmp { grid-template-columns: 1fr; } }

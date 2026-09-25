@@ -55,7 +55,8 @@ if _DIST.is_dir():
     @app.get("/{full_path:path}")
     def _spa(full_path: str):
         if full_path.startswith(("api/", "docs", "openapi.json")):
-            return {"detail": "not found"}
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "not found"}, status_code=404)
         return FileResponse(str(_DIST / "index.html"))
 else:
     @app.get("/")

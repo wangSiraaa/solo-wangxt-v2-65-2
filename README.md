@@ -2,7 +2,7 @@
 
 在**发布前**离线看清前缀策略会放行/拒绝哪些前缀。完全本地，**不连接任何生产设备**。
 
-* **React**：前缀树 + 命中链可视化、规则编辑、遮蔽检查、语义差异（最小见证前缀集）、有序回放、FRR 交叉验证
+* **React**：前缀树 + 命中链可视化、规则编辑、遮蔽检查、语义差异（最小见证前缀集）、有序回放、语义三方合并/逐项决议、FRR 交叉验证
 * **FastAPI**：REST API，判定核心用 Python 标准库 **`ipaddress`**
 * **PostgreSQL**：邻居、有序规则、不可变配置快照、场景、验证运行（也可用 SQLite 免依赖运行）
 * **FRRouting 容器**（router-a / router-b，隔离 bridge）：用 FRR 自己的 prefix-list 匹配器做交叉验证
@@ -34,6 +34,37 @@
 * `deny→deny` 只是命中规则换了、转发结果没变，**不会**出现；纯文本改写（如改备注）得到空集。
 
 同时提供**遮蔽分析**：完全遮蔽（永不可达，给出被截获的代表前缀）与部分重叠。
+
+## 2.5 语义并发编辑与三方合并
+
+多人从同一个不可变快照创建工作副本；副本持久保存：
+
+* 基线快照 ID；
+* 完整的递增版本与 append-only 编辑操作历史；
+* 当前规则/默认动作。
+
+提交不是文本合并，也不是最后写入者覆盖。预览时对 **base / mainline / workcopy** 三个实际前缀策略运行同一套精确单元与最小见证算法，按真实 permit/deny 集合分类：
+
+1. **可自动合并**：双方改动发生在互不重叠的行为区域（如不同前缀范围），系统生成候选并逐区域验证；
+2. **文本不同但语义等价**：备注、等价改写等不改变任何前缀动作时进入等价组，不制造伪冲突；
+3. **必须人工处理**：双方都改变同一行为区域且最终动作相反（典型为换序导致同一前缀 permit/deny 相反），给出最浅/最小见证前缀、base/main/copy 三方命中链以及主线/副本逐项决议。
+
+所有决议、未决冲突和候选都写入 `merge_sessions`，刷新页面或重启服务后可恢复。提交在单个数据库事务中完成：先验证主线仍为预览时版本，再替换主线策略并原子生成唯一后继快照；唯一 `(policy_id, version)` 约束与工作副本/合并会话的乐观版本防止重复提交、丢失编辑和并发决议生成多个后继。放弃只把会话标记为 abandoned，不写入主线快照，也不改变原工作副本。
+
+提交候选可先运行现有有序探针；勾选本地 FRR 后会渲染临时 prefix-list、调用本地容器验证并清理，验证失败时事务不会开始。
+
+### 合并 API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/policies/{id}/workcopies` | 从快照（默认最新）创建工作副本 |
+| GET | `/api/workcopies/{id}` / `operations` | 查看当前状态与递增操作历史 |
+| PUT | `/api/workcopies/{id}/rules` | 乐观版本检查下保存编辑 |
+| POST | `/api/workcopies/{id}/merge-preview` | 语义三方预览（自动/等价/冲突） |
+| POST | `/api/merge-sessions/{id}/resolutions` | 保存逐项决议（GET `/api/merge-sessions/{id}` 恢复） |
+| POST | `/api/merge-sessions/{id}/validate` | 对候选运行探针，可选本地 FRR |
+| POST | `/api/merge-sessions/{id}/commit` | 原子提交唯一后继快照（重复调用幂等） |
+| POST | `/api/merge-sessions/{id}/abandon` | 放弃未决预览，不污染任何分支 |
 
 ### 三个内置示例（`backend/app/seed.py`，含 before/after 快照与有序探针，可回放）
 
@@ -110,6 +141,7 @@ python -m pytest tests/ -q
 * `test_engine.py`：精确匹配、ge/le 窗口、首条匹配、默认拒绝、v4/v6 隔离、三个示例决策；
 * `test_properties.py`：在完整枚举的 /0../6（v4）与 /32../34（v6）格子上，对数百个随机策略用暴力预言机验证**遮蔽判定**与**最小见证集**逐区域一致（非采样）；
 * `test_api.py`：编辑→快照→差异→回放的端到端 REST；
+* `test_merge.py`：不相交改动自动合并、双方换序动作相反阻止提交、语义等价无伪冲突、重复提交幂等、乐观版本、放弃与重启恢复，以及候选探针验证；
 * `test_frr_consistency.py`：FRR 输出解析、随机 400 例与 FRR `prefix_list_apply` 移植模型逐条一致；`test_live_frr_consistency` 在检测到容器时自动对真实 FRR 运行。
 
 ## 7. 主要 API
@@ -123,6 +155,7 @@ python -m pytest tests/ -q
 | POST | `/api/policies/{id}/classify/batch` | 批量有序推演（坏输入逐条隔离报错） |
 | GET | `/api/policies/{id}/trie` | 前缀树视图 |
 | POST | `/api/policies/{id}/snapshots` | 创建不可变快照 |
+| POST | `/api/policies/{id}/workcopies`、`/api/workcopies/{id}/merge-preview` 等 | 工作副本、语义三方合并预览/决议/提交/放弃 |
 | POST | `/api/snapshots/diff` | 两个快照的最小见证集差异 |
 | POST | `/api/snapshots/{id}/replay` | 有序探针确定性回放 |
 | POST | `/api/snapshots/{id}/cross-validate` | 推送 FRR 容器并逐条比对 |

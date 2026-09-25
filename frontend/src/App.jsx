@@ -5,6 +5,7 @@ import TrieView from './components/TrieView.jsx'
 import DiffView from './components/DiffView.jsx'
 import ReplayLab from './components/ReplayLab.jsx'
 import Neighbors from './components/Neighbors.jsx'
+import MergeLab from './components/MergeLab.jsx'
 
 const TABS = [
   { id: 'edit', label: '① 规则编辑 / 遮蔽检查', comp: PolicyEditor },
@@ -12,6 +13,7 @@ const TABS = [
   { id: 'diff', label: '③ 语义差异（最小见证）', comp: DiffView },
   { id: 'replay', label: '④ 回放 / FRR 交叉验证', comp: ReplayLab },
   { id: 'neighbors', label: '⑤ 邻居', comp: Neighbors },
+  { id: 'merge', label: '⑥ 并发工作副本 / 三方合并', comp: MergeLab },
 ]
 
 export default function App() {

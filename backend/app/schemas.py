@@ -13,6 +13,7 @@ class RuleIn(BaseModel):
     ge: Optional[int] = Field(default=None, ge=0, le=128)
     le: Optional[int] = Field(default=None, ge=0, le=128)
     remark: str = ""
+    rid: Optional[str] = Field(default=None, min_length=1, max_length=64)
 
 
 class PolicyIn(BaseModel):
@@ -30,6 +31,48 @@ class PolicyRulesIn(BaseModel):
 class SnapshotIn(BaseModel):
     label: str = ""
     created_by: str = "lab"
+    parent_snapshot_id: Optional[int] = None
+
+
+class WorkCopyIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    base_snapshot_id: Optional[int] = None
+    created_by: str = "lab"
+
+
+class WorkCopyRulesIn(BaseModel):
+    rules: List[RuleIn]
+    default_action: Optional[str] = Field(default=None, pattern="^(permit|deny)$")
+    expected_version: int = Field(ge=0)
+    note: str = ""
+
+
+class MergePreviewIn(BaseModel):
+    expected_workcopy_version: Optional[int] = Field(default=None, ge=0)
+    refresh: bool = False
+
+
+class MergeResolutionIn(BaseModel):
+    resolutions: dict[str, str] = Field(default_factory=dict)
+    expected_session_version: int = Field(default=1, ge=1)
+
+
+class MergeCommitIn(BaseModel):
+    expected_session_version: int = Field(default=1, ge=1)
+    label: str = ""
+    validate_probes: List[str] = []
+    node: str = "a"
+    run_frr: bool = False
+
+
+class MergeDiscardIn(BaseModel):
+    reason: str = ""
+
+
+class CandidateValidateIn(BaseModel):
+    probes: List[str]
+    node: str = "a"
+    run_frr: bool = False
 
 
 class ClassifyIn(BaseModel):

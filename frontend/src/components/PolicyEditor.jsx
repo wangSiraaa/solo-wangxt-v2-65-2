@@ -42,6 +42,7 @@ export default function PolicyEditor({ policy, onChange }) {
       const payload = rows
         .filter((r) => r.prefix.trim() !== '')
         .map((r) => ({
+          rid: r.rid,
           seq: Number(r.seq),
           prefix: r.prefix.trim(),
           action: r.action,

@@ -6,16 +6,18 @@ import ipaddress
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import db as dbmod, service
+from .. import db as dbmod, service, workcopies
 from ..engine import PolicyError
 from ..schemas import (
-    ClassifyIn, DiffIn, NeighborIn, PolicyIn, PolicyRulesIn, ProbesIn,
-    ScenarioIn, SnapshotIn,
+    CandidateValidateIn, ClassifyIn, DiffIn, MergeCommitIn, MergeDiscardIn,
+    MergePreviewIn, MergeResolutionIn, NeighborIn, PolicyIn, PolicyRulesIn,
+    ProbesIn, ScenarioIn, SnapshotIn, WorkCopyIn, WorkCopyRulesIn,
 )
 from ..service import ValidationError
 from ..treeview import policy_trie, hit_path, coverage_map
 from ..validate import cross_validate_snapshot
 from ..frr_bridge import FRRBridge, FRRUnavailable
+from ..merge import MergeError
 
 router = APIRouter(prefix="/api")
 
@@ -162,7 +164,14 @@ def list_snapshots(pid: int, db: Session = Depends(get_db)):
 @router.post("/policies/{pid}/snapshots", status_code=201)
 def take_snapshot(pid: int, body: SnapshotIn, db: Session = Depends(get_db)):
     p = _get_policy(db, pid)
-    snap = service.create_snapshot(db, p, label=body.label, created_by=body.created_by)
+    parent = None
+    if body.parent_snapshot_id is not None:
+        parent = db.get(dbmod.Snapshot, body.parent_snapshot_id)
+        if parent is None or parent.policy_id != pid:
+            raise HTTPException(404, "parent snapshot not found")
+    snap = service.create_snapshot(db, p, label=body.label,
+                                   created_by=body.created_by,
+                                   parent_snapshot=parent)
     return service.snapshot_dict(snap)
 
 
@@ -190,6 +199,143 @@ def replay(sid: int, body: ProbesIn, db: Session = Depends(get_db)):
         raise HTTPException(404, str(e))
     except (PolicyError, ValueError) as e:
         raise HTTPException(422, str(e))
+
+
+# ----------------------------------------------------------- working copies
+@router.post("/policies/{pid}/workcopies", status_code=201)
+def create_workcopy(pid: int, body: WorkCopyIn, db: Session = Depends(get_db)):
+    _get_policy(db, pid)
+    try:
+        wc = workcopies.create_workcopy(
+            db, pid, body.name, body.base_snapshot_id, body.created_by)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    return workcopies.workcopy_dict(wc, db)
+
+
+@router.get("/policies/{pid}/workcopies")
+def list_workcopies(pid: int, db: Session = Depends(get_db)):
+    _get_policy(db, pid)
+    wcs = db.query(dbmod.WorkCopy).filter_by(policy_id=pid) \
+        .order_by(dbmod.WorkCopy.id).all()
+    return [workcopies.workcopy_dict(w, db) for w in wcs]
+
+
+@router.get("/workcopies/{wid}")
+def get_workcopy(wid: int, db: Session = Depends(get_db)):
+    try:
+        wc = workcopies.get_workcopy(db, wid)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    return workcopies.workcopy_dict(wc, db)
+
+
+@router.put("/workcopies/{wid}/rules")
+def edit_workcopy(wid: int, body: WorkCopyRulesIn, db: Session = Depends(get_db)):
+    try:
+        wc = workcopies.edit_workcopy(
+            db, wid, [r.model_dump() for r in body.rules],
+            body.default_action, body.expected_version, body.note)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    return workcopies.workcopy_dict(wc, db)
+
+
+@router.get("/workcopies/{wid}/operations")
+def list_operations(wid: int, db: Session = Depends(get_db)):
+    try:
+        wc = workcopies.get_workcopy(db, wid)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    return [{"id": o.id, "version": o.version, "operation": o.operation,
+             "created_at": o.created_at.isoformat()} for o in wc.operations]
+
+
+@router.post("/workcopies/{wid}/merge-preview", status_code=201)
+def preview_workcopy_merge(wid: int, body: MergePreviewIn,
+                           db: Session = Depends(get_db)):
+    try:
+        ms = workcopies.preview_merge(
+            db, wid, body.expected_workcopy_version, body.refresh)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    except (MergeError, PolicyError, ValueError) as e:
+        raise HTTPException(422, str(e))
+    return workcopies.merge_session_dict(ms)
+
+
+@router.get("/workcopies/{wid}/merge-sessions")
+def list_merge_sessions(wid: int, db: Session = Depends(get_db)):
+    try:
+        wc = workcopies.get_workcopy(db, wid)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    return [workcopies.merge_session_dict(m) for m in wc.merge_sessions]
+
+
+@router.get("/merge-sessions/{mid}")
+def get_merge_session(mid: int, db: Session = Depends(get_db)):
+    try:
+        ms = workcopies.get_merge_session(db, mid)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    return workcopies.merge_session_dict(ms)
+
+
+@router.post("/merge-sessions/{mid}/resolutions")
+def resolve_merge_session(mid: int, body: MergeResolutionIn,
+                          db: Session = Depends(get_db)):
+    try:
+        ms = workcopies.resolve_merge(
+            db, mid, body.resolutions, body.expected_session_version)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    except (MergeError, PolicyError, ValueError) as e:
+        raise HTTPException(422, str(e))
+    return workcopies.merge_session_dict(ms)
+
+
+@router.post("/merge-sessions/{mid}/validate")
+def validate_merge_candidate(mid: int, body: CandidateValidateIn,
+                             db: Session = Depends(get_db)):
+    try:
+        return workcopies.validate_candidate(
+            db, mid, body.probes, body.node, body.run_frr)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    except (MergeError, PolicyError, ValueError) as e:
+        raise HTTPException(422, str(e))
+
+
+@router.post("/merge-sessions/{mid}/commit", status_code=201)
+def commit_merge_session(mid: int, body: MergeCommitIn,
+                         db: Session = Depends(get_db)):
+    try:
+        snap = workcopies.commit_merge(
+            db, mid, body.expected_session_version, body.label,
+            body.validate_probes, body.node, body.run_frr)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+    except (MergeError, PolicyError, ValueError) as e:
+        raise HTTPException(422, str(e))
+    return service.snapshot_dict(snap)
+
+
+@router.post("/merge-sessions/{mid}/abandon")
+def abandon_merge_session(mid: int, body: MergeDiscardIn,
+                          db: Session = Depends(get_db)):
+    try:
+        return workcopies.abandon_merge(db, mid, body.reason)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@router.delete("/workcopies/{wid}", status_code=204)
+def delete_workcopy(wid: int, db: Session = Depends(get_db)):
+    try:
+        workcopies.delete_workcopy(db, wid)
+    except workcopies.WorkCopyError as e:
+        raise HTTPException(e.status, str(e))
 
 
 # ----------------------------------------------------- FRR cross-validation
